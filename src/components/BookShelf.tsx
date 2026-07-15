@@ -4,7 +4,7 @@ import {
   BookOpen, Plus, FolderPlus, ListFilter, Trash2, Edit2,
   Search, Upload, ArrowRight, Check, Star, Settings, ChevronDown,
   Grid, List as ListIcon, X, Tag, FileText, Bookmark, MessageSquare, AlertCircle,
-  HardDrive, Cloud, Link2, Loader2, Download
+  HardDrive, Cloud, Link2, Loader2, Download, FolderInput
 } from 'lucide-react';
 
 interface BookShelfProps {
@@ -38,6 +38,7 @@ export default function BookShelf({
   const [showListModal, setShowListModal] = useState<boolean>(false);
   const [showEditModal, setShowEditModal] = useState<boolean>(false);
   const [selectedBookForEdit, setSelectedBookForEdit] = useState<Book | null>(null);
+  const [moveMenuBookId, setMoveMenuBookId] = useState<string | null>(null);
 
   // Search and View states
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -285,6 +286,57 @@ export default function BookShelf({
     return 0;
   });
 
+  // All collections a book can be moved into (system + custom).
+  const collectionOptions = [
+    { id: 'to-read', name: 'To Read' },
+    { id: 'reading', name: 'Currently Reading' },
+    { id: 'completed', name: 'Completed' },
+    ...lists.filter((l) => !l.isSystem).map((l) => ({ id: l.id, name: l.name })),
+  ];
+
+  const moveBook = (book: Book, listId: string) => {
+    if (book.listId !== listId) {
+      onUpdateBook({ ...book, listId });
+    }
+    setMoveMenuBookId(null);
+  };
+
+  // Quick "move to collection" dropdown shown on each book card.
+  const renderMoveMenu = (book: Book) => (
+    <div className="relative">
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setMoveMenuBookId(moveMenuBookId === book.id ? null : book.id);
+        }}
+        className={`p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer ${
+          moveMenuBookId === book.id ? 'text-amber-600 bg-black/5 dark:bg-white/5' : 'text-zinc-500'
+        }`}
+        title="Move to collection"
+      >
+        <FolderInput className="w-3.5 h-3.5" />
+      </button>
+      {moveMenuBookId === book.id && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setMoveMenuBookId(null)} />
+          <div className={`absolute right-0 top-full mt-1 z-40 w-48 rounded-xl border ${themeConfig.cardBg} ${themeConfig.border} shadow-xl py-1`}>
+            <p className="px-3 py-1 text-[9px] uppercase tracking-wider opacity-50 font-mono">Move to collection</p>
+            {collectionOptions.map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => moveBook(book, opt.id)}
+                className="w-full flex items-center justify-between gap-2 px-3 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer text-left"
+              >
+                <span className="truncate">{opt.name}</span>
+                {book.listId === opt.id && <Check className="w-3 h-3 text-amber-600 shrink-0" />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+
   const LIST_COLORS = [
     { name: 'amber', bg: 'bg-amber-100 dark:bg-amber-900/30 text-amber-800 dark:text-amber-300 border-amber-200' },
     { name: 'emerald', bg: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-300 border-emerald-200' },
@@ -467,8 +519,9 @@ export default function BookShelf({
                         {belongsToList?.name || 'Reading'}
                       </span>
 
-                      {/* Delete book option */}
-                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {/* Move / Edit / Delete book options */}
+                      <div className={`flex items-center gap-1 transition-opacity ${moveMenuBookId === book.id ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                        {renderMoveMenu(book)}
                         <button
                           onClick={() => openEditModal(book)}
                           className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 text-zinc-500 cursor-pointer"
@@ -625,6 +678,7 @@ export default function BookShelf({
                           </button>
                           
                           {/* Options */}
+                          {renderMoveMenu(book)}
                           <button
                             onClick={() => openEditModal(book)}
                             className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5 text-zinc-500 cursor-pointer"
