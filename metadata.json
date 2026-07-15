@@ -1,0 +1,6 @@
+{
+  "name": "Kindle PDF Reader & Reading Tracker",
+  "description": "A premium, fully featured reading application for mobile and desktop. Upload your personal PDFs, organize books into custom lists, track your daily reading streaks, log notes, and enjoy custom eye-safe reading themes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
