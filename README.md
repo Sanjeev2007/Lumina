@@ -41,7 +41,25 @@ The app runs at `http://localhost:3000` (Vite picks the next free port if it's t
 
 ## Importing from Google Drive
 
-The Drive tab accepts a share link for a PDF set to **"Anyone with the link"**. Note that Google's download endpoint does not send CORS headers, so a direct in-browser fetch is blocked by the browser for most files. Reliable Drive import requires either a small server-side proxy or the Google Drive Picker (OAuth) — not yet wired up. For now, downloading the PDF and using the **My Device** tab is the dependable path.
+The upload modal has a **Google Drive** tab: paste a share link for a PDF set to **"Anyone with the link"** and it imports into your library.
+
+Because Google's download endpoint doesn't send CORS headers, the browser can't fetch it directly. Instead the app calls a same-origin proxy that fetches the file server-side (no CORS) and streams it back:
+
+- **Production (Vercel):** `api/drive.js` runs as a serverless function at `/api/drive`.
+- **Dev/preview:** the same logic is mounted as Vite middleware (see [`vite.config.ts`](vite.config.ts) + [`lib/drive-proxy.js`](lib/drive-proxy.js)), so `npm run dev` and `npm run preview` work identically.
+
+The file must be shared publicly ("Anyone with the link"); private files return a clear error. Very large files stream through, but be mindful of your host's serverless execution/time limits.
+
+## Deploying to Vercel
+
+Zero config — Vercel auto-detects the Vite app and the `api/` function:
+
+- **Framework Preset:** Vite
+- **Build Command:** `npm run build` (default)
+- **Output Directory:** `dist` (default)
+- **Install Command:** `npm install` (default)
+
+No environment variables are required. `api/drive.js` deploys automatically as a Node serverless function.
 
 ## Project structure
 

@@ -138,17 +138,25 @@ export default function BookShelf({
 
     setDriveLoading(true);
     try {
-      const downloadUrl = `https://drive.usercontent.google.com/download?id=${fileId}&export=download`;
-      const res = await fetch(downloadUrl);
-      if (!res.ok) throw new Error(`http-${res.status}`);
+      // Same-origin proxy (api/drive.js) fetches from Google server-side,
+      // sidestepping the browser CORS block on Drive's download endpoint.
+      const res = await fetch(`/api/drive?id=${encodeURIComponent(fileId)}`);
+      if (!res.ok) {
+        let serverMsg = '';
+        try {
+          const j = await res.json();
+          serverMsg = j?.error || '';
+        } catch {
+          /* body wasn't JSON */
+        }
+        throw new Error(serverMsg || `Drive request failed (${res.status}).`);
+      }
 
       const blob = await res.blob();
-      // Drive returns an HTML interstitial (virus-scan/consent) instead of the file
-      // when access is restricted or the file is large — reject those.
       if (blob.type.includes('text/html') || blob.type.includes('application/json')) {
-        throw new Error('interstitial');
+        throw new Error('This file is not publicly downloadable. Set sharing to “Anyone with the link”.');
       }
-      if (blob.size === 0) throw new Error('empty');
+      if (blob.size === 0) throw new Error('The downloaded file was empty.');
 
       const file = new File([blob], `drive-${fileId}.pdf`, { type: 'application/pdf' });
       setSelectedFile(file);
@@ -156,9 +164,7 @@ export default function BookShelf({
       if (!uploadTitle.trim()) setUploadTitle('Imported from Drive');
       if (!uploadAuthor.trim()) setUploadAuthor('Google Drive');
     } catch (err) {
-      setUploadError(
-        "Couldn't fetch that file from Drive. Make sure it's shared as “Anyone with the link” and is a PDF. Very large files and cross-origin (CORS) restrictions can block direct download."
-      );
+      setUploadError(err instanceof Error ? err.message : 'Could not fetch this file from Drive.');
     } finally {
       setDriveLoading(false);
     }
