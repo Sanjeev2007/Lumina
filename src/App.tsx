@@ -1,18 +1,21 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import { Book, ReadingList, Streak, ThemeType, ThemeConfig } from './types';
-import { 
-  getBooks, saveBook, deleteBook, getBookPdf,
-  getLists, saveLists, getStreak, saveStreak,
-  getTheme, saveTheme 
-} from './lib/db';
+import { getBooks, getLists, getStreak, getTheme } from './lib/db';
+import {
+  persistBook, removeBookEverywhere, persistLists,
+  persistStreak, persistTheme, loadPdf, syncOnLogin,
+} from './lib/store';
+import { supabase, cloudEnabled, signOut } from './lib/supabase';
 import { THEMES } from './lib/themes';
 import StyleSelector from './components/StyleSelector';
 import StreakTracker from './components/StreakTracker';
 import BookShelf from './components/BookShelf';
 import BookReader from './components/BookReader';
-import { 
-  BookOpen, Flame, Sparkles, Award, Compass, 
-  HelpCircle, Settings, Coffee, Star, Github 
+import AuthModal from './components/AuthModal';
+import {
+  BookOpen, Flame, Sparkles, Award, Compass,
+  HelpCircle, Settings, Coffee, Star, Github, Cloud, LogOut, User,
 } from 'lucide-react';
 
 // Predefined system lists
@@ -39,6 +42,12 @@ export default function App() {
   const [activeBookPdfBlob, setActiveBookPdfBlob] = useState<Blob | null>(null);
   const [appLoading, setAppLoading] = useState<boolean>(true);
 
+  // Cloud sync / auth
+  const [session, setSession] = useState<Session | null>(null);
+  const [showAuth, setShowAuth] = useState<boolean>(false);
+  const [showAccountMenu, setShowAccountMenu] = useState<boolean>(false);
+  const userId = session?.user?.id ?? null;
+
   // Load initial settings and data from DB
   useEffect(() => {
     async function initAppData() {
@@ -54,8 +63,8 @@ export default function App() {
         // 2. Lists / Collections
         let storedLists = await getLists();
         if (!storedLists || storedLists.length === 0) {
-          // Initialize default system lists
-          await saveLists(SYSTEM_LISTS);
+          // Initialize default system lists (local; cloud seeded on sign-in)
+          await persistLists(SYSTEM_LISTS, null);
           storedLists = SYSTEM_LISTS;
         }
         setLists(storedLists);
@@ -77,10 +86,42 @@ export default function App() {
     initAppData();
   }, []);
 
+  // Track the Supabase auth session (no-op when cloud is not configured).
+  useEffect(() => {
+    if (!supabase) return;
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // On sign-in, pull the cloud library (and seed cloud from local if new).
+  useEffect(() => {
+    if (!userId) return;
+    let active = true;
+    (async () => {
+      try {
+        setAppLoading(true);
+        const snap = await syncOnLogin(userId);
+        if (!active) return;
+        setBooks(snap.books);
+        if (snap.lists.length) setLists(snap.lists);
+        if (snap.streak) setStreak(snap.streak);
+        if (snap.theme && Object.keys(THEMES).includes(snap.theme)) {
+          setCurrentTheme(snap.theme as ThemeType);
+        }
+      } catch (err) {
+        console.error('Cloud sync failed:', err);
+      } finally {
+        if (active) setAppLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, [userId]);
+
   // Update theme setting
   const handleThemeChange = async (themeId: ThemeType) => {
     setCurrentTheme(themeId);
-    await saveTheme(themeId);
+    await persistTheme(themeId, userId);
   };
 
   // Upload book PDF & Metadata
@@ -108,9 +149,9 @@ export default function App() {
       bookmarks: [],
     };
 
-    // Save to IndexedDB (Metadata + heavy PDF Blob file)
-    await saveBook(newBook, file);
-    
+    // Save locally (+ cloud upload when signed in)
+    await persistBook(newBook, userId, file);
+
     // Update local state
     setBooks((prev) => [newBook, ...prev]);
   };
@@ -125,16 +166,16 @@ export default function App() {
     };
     const updatedLists = [...lists, newList];
     setLists(updatedLists);
-    await saveLists(updatedLists);
+    await persistLists(updatedLists, userId);
   };
 
   // Modify / Update Book values
   const handleUpdateBook = async (updatedBook: Book) => {
     // Save to local state
     setBooks((prev) => prev.map((b) => (b.id === updatedBook.id ? updatedBook : b)));
-    
-    // Save to IndexedDB (only metadata needs updating here, so pass undefined for blob)
-    await saveBook(updatedBook);
+
+    // Persist metadata locally (+ cloud when signed in); no blob change here
+    await persistBook(updatedBook, userId);
 
     // If currently reading, update reader state too
     if (activeBookForReader && activeBookForReader.id === updatedBook.id) {
@@ -145,7 +186,7 @@ export default function App() {
   // Delete Book
   const handleDeleteBook = async (bookId: string) => {
     if (confirm('Are you sure you want to remove this book from your Lumina library?')) {
-      await deleteBook(bookId);
+      await removeBookEverywhere(bookId, userId);
       setBooks((prev) => prev.filter((b) => b.id !== bookId));
       if (activeBookForReader?.id === bookId) {
         setActiveBookForReader(null);
@@ -158,8 +199,8 @@ export default function App() {
   const handleSelectBookToRead = async (book: Book) => {
     try {
       setAppLoading(true);
-      const pdfBlob = await getBookPdf(book.id);
-      
+      const pdfBlob = await loadPdf(book.id, userId);
+
       if (!pdfBlob) {
         // Fallback: create dynamic placeholder guide PDF so they can read immediately
         const guideHtml = `
@@ -253,14 +294,17 @@ export default function App() {
     };
 
     setStreak(updatedStreak);
-    await saveStreak(updatedStreak);
-  }, [streak]);
+    await persistStreak(updatedStreak, userId);
+  }, [streak, userId]);
 
   const themeConfig = THEMES[currentTheme];
 
   return (
     <div className={`min-h-screen ${themeConfig.bg} ${themeConfig.text} font-sans transition-colors duration-300 flex flex-col justify-between`}>
-      
+
+      {/* Sign-in modal */}
+      {showAuth && <AuthModal themeConfig={themeConfig} onClose={() => setShowAuth(false)} />}
+
       {/* App Loader overlay */}
       {appLoading && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-xs flex flex-col items-center justify-center text-white">
@@ -313,6 +357,56 @@ export default function App() {
                   <div className="text-sm font-bold font-sans">{streak.currentStreak} Days Consecutive</div>
                 </div>
               </div>
+
+              {/* Cloud sync / account control */}
+              {cloudEnabled && (
+                session ? (
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowAccountMenu((v) => !v)}
+                      className={`p-3.5 rounded-xl border flex items-center gap-2 ${themeConfig.cardBg} ${themeConfig.border} shadow-xs cursor-pointer hover:border-amber-500/40 transition-colors`}
+                      title="Account & sync"
+                    >
+                      <div className="w-6 h-6 rounded-full bg-amber-600 text-white flex items-center justify-center text-xs font-bold uppercase">
+                        {(session.user.email || '?').charAt(0)}
+                      </div>
+                      <div className="hidden sm:block text-left">
+                        <div className="text-[9px] opacity-70 uppercase tracking-wider font-mono flex items-center gap-1"><Cloud className="w-2.5 h-2.5" /> Synced</div>
+                        <div className="text-xs font-medium truncate max-w-[140px]">{session.user.email}</div>
+                      </div>
+                    </button>
+                    {showAccountMenu && (
+                      <>
+                        <div className="fixed inset-0 z-30" onClick={() => setShowAccountMenu(false)} />
+                        <div className={`absolute right-0 top-full mt-2 z-40 w-56 rounded-xl border ${themeConfig.cardBg} ${themeConfig.border} shadow-xl p-1`}>
+                          <div className={`px-3 py-2 border-b ${themeConfig.border}`}>
+                            <p className="text-[10px] uppercase tracking-wider opacity-50 font-mono">Signed in as</p>
+                            <p className="text-xs font-medium truncate">{session.user.email}</p>
+                          </div>
+                          <button
+                            onClick={async () => { setShowAccountMenu(false); await signOut(); }}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer text-left"
+                          >
+                            <LogOut className="w-3.5 h-3.5" /> Sign out
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setShowAuth(true)}
+                    className={`p-3.5 rounded-xl text-white flex items-center gap-2 shadow-xs cursor-pointer transition-all hover:scale-[1.02] ${themeConfig.accent} ${themeConfig.accentHover}`}
+                    title="Sign in to sync across devices"
+                  >
+                    <Cloud className="w-5 h-5" />
+                    <div className="hidden sm:block text-left">
+                      <div className="text-[9px] opacity-80 uppercase tracking-wider font-mono">Cross-device</div>
+                      <div className="text-xs font-bold">Sign in to sync</div>
+                    </div>
+                  </button>
+                )
+              )}
             </div>
           </header>
 

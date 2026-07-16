@@ -90,6 +90,20 @@ export async function getBooks(): Promise<Book[]> {
   }
 }
 
+export async function savePdfBlob(id: string, blob: Blob): Promise<void> {
+  try {
+    const db = await openDB();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction('pdf_files', 'readwrite');
+      const request = tx.objectStore('pdf_files').put(blob, id);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    console.error('Failed to cache PDF blob to IndexedDB:', error);
+  }
+}
+
 export async function getBookPdf(id: string): Promise<Blob | null> {
   try {
     const db = await openDB();

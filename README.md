@@ -14,6 +14,7 @@ A premium, offline-first reading app for desktop and mobile. Import your own PDF
 - **Notes, bookmarks & ratings** — mark pages, jot notes tied to a page, and rate your books.
 - **Themes** — three hand-tuned reading styles: Warm Sepia, Sophisticated Dark, and Editorial Paper.
 - **Offline-first & responsive** — books and progress persist locally in IndexedDB and the app works with no network, on Mac and phone.
+- **Cross-device sync (optional)** — sign in with Google or an email magic link to sync your library, progress, notes, and the PDF files themselves across devices via Supabase. Not configured? The app just runs local-only.
 
 ## Screenshots
 
@@ -30,8 +31,9 @@ Import straight from a Google Drive share link:
 - **React 19** + **TypeScript** + **Vite 6**
 - **Tailwind CSS 4** for styling
 - **pdf.js** (`pdfjs-dist`) for page rendering
+- **Supabase** (Auth + Postgres + Storage) for optional cross-device sync
 - **lucide-react** icons, **motion** for animation
-- **IndexedDB** for local persistence (books, PDFs, lists, streaks, settings)
+- **IndexedDB** for local persistence and offline caching (books, PDFs, lists, streaks, settings)
 
 ## Run locally
 
@@ -64,6 +66,23 @@ Because Google's download endpoint doesn't send CORS headers, the browser can't 
 
 Private files return a clear error. Very large files stream through, but be mindful of your host's serverless execution/time limits.
 
+## Cross-device sync (optional)
+
+Lumina is local-first: with no configuration it stores everything in your browser. To
+sync across devices, connect a free **Supabase** project — you get Google + email
+sign-in, and your books, collections, streaks, notes, reading position, and the PDF
+files all follow you.
+
+The data layer is local-first with cloud mirroring: every change writes to IndexedDB
+instantly (works offline) and, when signed in, also to Supabase. See
+[`src/lib/store.ts`](src/lib/store.ts). PDFs are lazy-loaded — downloaded from Storage
+and cached locally the first time you open a book on a new device.
+
+**Setup:** follow [`docs/SUPABASE_SETUP.md`](docs/SUPABASE_SETUP.md) (run
+[`docs/supabase-schema.sql`](docs/supabase-schema.sql), enable sign-in, then set
+`VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`). Both keys are safe to expose in the
+client; row-level security keeps each user's data private.
+
 ## Deploying to Vercel
 
 Zero config — Vercel auto-detects the Vite app and the `api/` function:
@@ -73,7 +92,7 @@ Zero config — Vercel auto-detects the Vite app and the `api/` function:
 - **Output Directory:** `dist` (default)
 - **Install Command:** `npm install` (default)
 
-No environment variables are required. `api/drive.js` deploys automatically as a Node serverless function.
+`api/drive.js` deploys automatically as a Node serverless function. No env vars are required for the core app; to enable cross-device sync, add `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (see above) under **Settings → Environment Variables**.
 
 ## Project structure
 
@@ -84,15 +103,21 @@ lib/
   drive-proxy.js          Shared Drive fetch/stream core (prod + dev)
 docs/
   screenshots/            Images used in this README
+  supabase-schema.sql     Cloud sync schema (run in Supabase)
+  SUPABASE_SETUP.md       Cross-device sync setup guide
 src/
-  App.tsx                 App shell, state, IndexedDB orchestration
+  App.tsx                 App shell, state, local+cloud orchestration
   components/
     BookShelf.tsx         Library grid/list, upload modal, collections
     BookReader.tsx        Custom pdf.js reader (pagination, auto-resume)
     StreakTracker.tsx     Reading-streak dashboard
     StyleSelector.tsx     Theme picker
+    AuthModal.tsx         Google + magic-link sign-in
   lib/
-    db.ts                 IndexedDB read/write layer
+    db.ts                 IndexedDB read/write layer (local cache)
+    supabase.ts           Supabase client + auth helpers
+    cloud.ts              Cloud CRUD + PDF storage
+    store.ts              Local + cloud sync orchestration
     themes.ts             Theme definitions
   types.ts                Shared types
 ```
